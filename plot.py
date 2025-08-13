@@ -14,6 +14,14 @@ from datetime import datetime, timedelta
 
 from params import vec2comp
 
+# Try to import cartopy for mapping
+try:
+    import cartopy.crs as ccrs
+    import cartopy.feature as cfeature
+    HAS_CARTOPY = True
+except ImportError:
+    HAS_CARTOPY = False
+
 _seg_hghts = [0, 3, 6, 9, 12, 18]
 _seg_colors = ['r', '#00ff00', '#008800', '#993399', 'c']
 
@@ -36,6 +44,81 @@ def _fmt_timedelta(td):
                     strings.append("%s %s" % (period_value, period_name))
 
     return " ".join(strings)
+
+
+def _plot_radar_image(data, colors=None):
+    """Plot a simple radar location map with coordinate grid"""
+    # Get radar coordinates
+    try:
+        radar_lat = data['latitude']
+        radar_lon = data['longitude']
+    except (KeyError, AttributeError):
+        # Fallback if coordinates not available
+        pylab.text(0.5, 0.5, 'Radar Image\n(Coordinates not available)', 
+                  ha='center', va='center', transform=pylab.gca().transAxes,
+                  color=colors['text'], fontsize=10)
+        return
+    
+    # Create a coordinate plot with enhanced features
+    extent = 2.0  # degrees
+    lons = np.linspace(radar_lon - extent, radar_lon + extent, 9)
+    lats = np.linspace(radar_lat - extent, radar_lat + extent, 9)
+    
+    # Set up the plot area
+    pylab.xlim(radar_lon - extent, radar_lon + extent)
+    pylab.ylim(radar_lat - extent, radar_lat + extent)
+    
+    # Draw major grid lines (every degree)
+    for i, lon in enumerate(lons):
+        linewidth = 1.0 if i % 2 == 0 else 0.5
+        alpha = 0.6 if i % 2 == 0 else 0.3
+        pylab.axvline(lon, color=colors['background_line'], alpha=alpha, linewidth=linewidth)
+    for i, lat in enumerate(lats):
+        linewidth = 1.0 if i % 2 == 0 else 0.5
+        alpha = 0.6 if i % 2 == 0 else 0.3
+        pylab.axhline(lat, color=colors['background_line'], alpha=alpha, linewidth=linewidth)
+    
+    # Add range circles (every 100 km approximately)
+    circle_ranges = [50, 100, 150, 200]  # km
+    for r_km in circle_ranges:
+        # Convert km to degrees (rough approximation)
+        r_deg = r_km / 111.0  # 1 degree ≈ 111 km
+        circle = Circle((radar_lon, radar_lat), r_deg, fill=False, 
+                       edgecolor=colors['background_line'], alpha=0.4, linewidth=0.8, linestyle='--')
+        pylab.gca().add_patch(circle)
+        # Add range labels
+        if r_deg < extent:
+            pylab.text(radar_lon + r_deg * 0.7, radar_lat + r_deg * 0.7, f'{r_km}km', 
+                       color=colors['text'], alpha=0.7, fontsize=7)
+    
+    # Add radar location with enhanced marker
+    pylab.plot(radar_lon, radar_lat, 'r*', markersize=20, markeredgecolor='darkred', 
+              markeredgewidth=1, label=f'Radar {data.rid}', zorder=10)
+    
+    # Add coordinate labels on axes
+    pylab.xlabel('Longitude (°W)', color=colors['text'], fontsize=9)
+    pylab.ylabel('Latitude (°N)', color=colors['text'], fontsize=9)
+    
+    # Format the tick labels to show actual coordinates
+    ax = pylab.gca()
+    ax.set_xticks(lons[::2])  # Every other tick
+    ax.set_yticks(lats[::2])
+    ax.set_xticklabels([f'{abs(lon):.1f}°' for lon in lons[::2]], color=colors['text'], fontsize=8)
+    ax.set_yticklabels([f'{lat:.1f}°' for lat in lats[::2]], color=colors['text'], fontsize=8)
+    
+    # Add title with radar information
+    pylab.title(f'{data.rid} Radar Location\nLat: {radar_lat:.3f}°, Lon: {radar_lon:.3f}°', 
+               color=colors['text'], fontsize=10, pad=10)
+    
+    # Style the axes
+    for spine in ax.spines.values():
+        spine.set_color(colors['text'])
+        spine.set_alpha(0.7)
+    
+    # Add a note about the map features
+    pylab.text(0.02, 0.02, 'Coordinate grid with range circles\n(State/county lines require internet)', 
+              transform=ax.transAxes, fontsize=7, color=colors['text'], alpha=0.6,
+              bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.1))
 
 
 def _plot_param_table(parameters, web=False, colors=None):
@@ -126,7 +209,7 @@ def _plot_param_table(parameters, web=False, colors=None):
 
     if not web:
         pylab.text(start_x, line_y, "Critical Angle:", fontweight='bold', **kwargs)
-        val = "--" if np.isnan(parameters['critical']) else "%d$^{\circ}$" % int(parameters['critical'])
+        val = "--" if np.isnan(parameters['critical']) else "%d$^{\\circ}$" % int(parameters['critical'])
         pylab.text(start_x + 0.18, line_y - 0.0025, val, **kwargs)
     else:
         pylab.text(start_x, line_y - 0.0075, "Critical Angle:", fontweight='bold', **kwargs)
@@ -298,15 +381,18 @@ def plot_hodograph(data, parameters, fname=None, web=False, fixed=False, archive
             'storm_motion': 'white',
         }
 
-    pylab.figure(figsize=(10, 7.5), dpi=150)
+    # Create figure with subplots
+    pylab.figure(figsize=(10, 9.5), dpi=150)
+    # Main hodograph plot
+    ax1 = pylab.subplot2grid((3, 2), (0, 0), rowspan=2, projection=None)
+    # Radar image plot
+    ax2 = pylab.subplot2grid((3, 2), (2, 0))
+    
+    # Set current axes to main hodograph plot
+    pylab.sca(ax1)
+    
     fig_wid, fig_hght = pylab.gcf().get_size_inches()
     fig_aspect = fig_wid / fig_hght
-
-    axes_left = 0.05
-    axes_bot = 0.05
-    axes_hght = 0.9
-    axes_wid = axes_hght / fig_aspect
-    pylab.axes((axes_left, axes_bot, axes_wid, axes_hght))
 
     _plot_background(min_u, max_u, min_v, max_v, colors=colors)
     _plot_data(data, parameters, colors=colors)
@@ -326,6 +412,10 @@ def plot_hodograph(data, parameters, fname=None, web=False, fixed=False, archive
     if web:
         web_brand = "http://www.autumnsky.us/vad/"
         pylab.text(1.0, -0.01, web_brand, transform=pylab.gca().transAxes, ha='right', va='top', fontsize=9, color=colors['text'])
+
+    # Add radar image subplot
+    pylab.sca(ax2)
+    _plot_radar_image(data, colors=colors)
 
     pylab.savefig(img_file_name, dpi=pylab.gcf().dpi)
     pylab.close()

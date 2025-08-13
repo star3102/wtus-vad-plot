@@ -243,6 +243,10 @@ class VADFile(object):
     def __getitem__(self, key):
         if key == 'time':
             val = self._time
+        elif key == 'latitude':
+            val = self._radar_latitude
+        elif key == 'longitude':
+            val = self._radar_longitude
         else:
             val = self._data[key]
         return val
@@ -260,7 +264,7 @@ def find_file_times(rid):
     url = "%s/SI.%s/" % (_base_url, rid.lower())
 
     file_text = urlopen(url).read().decode('utf-8')
-    file_list = re.findall("([\w]{3} [\d]{1,2} [\d]{2}:[\d]{2}) (sn.[\d]{4})", file_text)
+    file_list = re.findall(r"([\w]{3} [\d]{1,2} [\d]{2}:[\d]{2}) (sn.[\d]{4})", file_text)
     file_times, file_names = list(zip(*file_list))
     file_names = list(file_names)
 
